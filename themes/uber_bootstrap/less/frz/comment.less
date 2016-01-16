@@ -1,0 +1,76 @@
+@userpicture-size: 50px;
+@comment-width: 700px;
+
+.comment {
+  max-width: @comment-width;
+  border-bottom: 1px solid @gray-lighter;
+
+  .badge a {
+    color: @badge-color;
+  }
+  .media-heading {
+    small, span {
+      margin-left: @padding-small-vertical;
+    }
+  }
+  .links {
+    font-size: @font-size-small * 0.8;
+  }
+}
+
+.comment-unpublished{
+  background: @gray-lighter;
+}
+
+.indented {
+  padding-left: @userpicture-size;
+}
+
+.comment-form {
+  max-width: @comment-width - @userpicture-size - 10px;
+
+  .field-name-comment-body {
+    label,
+    .description,
+    fieldset {
+      display: none;
+    }
+  }
+  .comment-actions {
+    text-align: right;
+  }
+
+  .form-type-textfield {
+    .input-group;
+    label {
+      .input-group-addon;
+      border-right: 0;
+    }
+  }
+}
+
+.comment-form-wrapper .comment-form-wrapper {
+  margin-top: 0;
+
+  .pull-left {
+    display: none;
+  }
+}
+
+.userpicture-default {
+  display: block;
+  width: @userpicture-size;
+  height: @userpicture-size;
+  text-align: center;
+  border: 1px solid #dedede;
+  color: @badge-color;
+  font-size: 30px;
+  line-height: @userpicture-size;
+}
+
+@media (max-width: @screen-xs) {
+  .indented {
+    padding-left: 0;
+  }
+}
+

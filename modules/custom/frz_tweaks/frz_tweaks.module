@@ -1,0 +1,181 @@
+<?php
+/**
+ * Implements hook_theme().
+ */
+function frz_tweaks_theme() {
+  return array(
+    'frz_googlecse' => array(
+      'variables' => array(),
+      'template' => 'frz_googlecse'
+    ),
+    'frz_counters' => array(
+      'variables' => array(),
+      'template' => 'frz_counters',
+    ),
+    'bootstrap_dropdown_button' => array(
+      'variables' => array('items' => array(), 'title' => NULL),
+    ),
+  );
+}
+
+/**
+ * Implements hook_block_info().
+ */
+function frz_tweaks_block_info() {
+  $blocks['frz_counters'] = array(
+    'info' => 'Counters',
+    'cache' => DRUPAL_CACHE_GLOBAL,
+    'region' => 'footer',
+  );
+
+  $blocks['frz_googlecse'] = array(
+    'info' => 'Google CSE',
+    'cache' => DRUPAL_CACHE_GLOBAL,
+    'region' => 'footer',
+  );
+  return $blocks;
+}
+
+/**
+ * Implements hook_block_view().
+ */
+function frz_tweaks_block_view($delta = '') {
+  $block = array();
+  switch ($delta) {
+    case 'frz_counters':
+      $block['subject'] = '';
+      $block['content'] = theme('frz_counters');
+      break;
+
+    case 'frz_googlecse':
+      $block['subject'] = '';
+      $block['content'] = theme('frz_googlecse');
+      break;
+  }
+  return $block;
+}
+
+/*
+ * Implementation hook_html_head_alter
+ */
+function frz_tweaks_html_head_alter(&$head_elements) {
+  unset($head_elements['system_meta_generator']);
+}
+
+/*
+ * Implementation hook_node_view_alter
+ */
+function frz_tweaks_node_view_alter(&$build) {
+  // Remove "Add new comment" link
+  unset($build['links']['comment']['#links']['comment-add']);
+
+  //Поставим ссылку 'node_readmore' на последнее место в списке ссылок
+  $node_links = $build['links']['node'];
+  unset($build['links']['node']);
+  $build['links']['node'] = $node_links;
+}
+
+/**
+ * Implements hook_preprocess_comment().
+ */
+function frz_tweaks_preprocess_comment(&$vars) {
+  $comment = $vars['comment'];
+
+  // Change the Permalink to display #1 instead of 'Permalink'
+  $url = url('node/' . $comment->nid);
+  $url .= '#comment-' . $comment->cid;
+  $vars['permalink'] = '<a href=' . $url . ' class="permalink" rel="bookmark" >#' . $vars['id'] . '</a>';
+
+  $time = time();
+  $diff = $time - $comment->created;
+  //если комментарий написан меньше минуты назад выводим строку
+  if ($diff < 60) {
+    $vars['time_ago'] = '<span class="label label-danger">только что</span>';
+  }
+  //если комментарий написан меньше суток назад выводим интервал
+  if ($diff >= 60 && $diff < 86400) {
+    $vars['time_ago'] = '<span class="label label-danger">' . frz_tweaks_helper::downcounter($comment->created, $time) . ' назад</span>';
+  }
+  //если комментарий написан больше суток назад выводим дату
+  if ($diff >= 86400) {
+    $vars['time_ago'] = '<small>' . format_date($comment->created) . '</small>';
+  }
+
+  if (!isset($vars['picture']) || empty($vars['picture'])) {
+    $vars['picture'] = frz_tweaks_helper::userpicture_default($comment->name);
+  }
+}
+
+/**
+ * Implements hook_form_FORM_ID_alter().
+ */
+function frz_tweaks_form_comment_form_alter(&$form, &$form_state, &$form_id) {
+  $form['comment_body'][LANGUAGE_NONE]['#pre_render'][] = 'frz_tweaks_customize_comment_form_prerender';
+
+  global $user;
+  if ($form['is_anonymous']['#value'] == FALSE && isset($form['author']['_author'])) {
+    unset($form['author']['_author']);
+  }
+
+  $form['author']['homepage']['#access'] = FALSE;
+  $form['actions']['submit']['#value'] = 'Отправить';
+  $form['author']['mail']['#description'] = '';
+  $lang = $form['comment_body']['#language'];
+  $form['comment_body'][$lang][0]['#attributes']['placeholder'] = 'Сообщение...';
+  $form['comment_body'][$lang][0]['#resizable'] = FALSE;
+
+  $form['actions']['#prefix'] = '<div class="comment-actions">';
+  $form['actions']['#suffix'] = '</div>';
+
+  if ($user->uid != 0) {
+    $user_picture = theme('user_picture', array('account' => $user));
+  }
+  else {
+    $user_picture = frz_tweaks_helper::userpicture_default('?');
+  }
+
+  $form['#prefix'] = '<div class="media comment-form-wrapper"><div class="pull-left">' . $user_picture . '</div>';
+  $form['#attributes']['class'][] = 'media-body';
+  $form['#suffix'] = '</div>';
+
+}
+
+/**
+ * Prerender callback.
+ */
+function frz_tweaks_customize_comment_form_prerender($element) {
+  $element[0]['#format'] = 'comments';
+  $element[0]['format']['format']['#value'] = 'comments';
+  $element[0]['format']['format']['#default_value'] = 'comments';
+  $element[0]['format']['format']['#access'] = FALSE;
+  // That's a hack! We set options for Wysiwyg and it works.
+  $element[0]['format']['format']['#options'] = array('comments' => 'Comments');
+  $element[0]['format']['help']['#access'] = FALSE;
+  $element[0]['format']['guidelines']['#access'] = FALSE;
+  return $element;
+}
+
+function theme_bootstrap_dropdown_button($variables) {
+  $output = '';
+  $items = $variables['items'];
+  $title = $variables['title'];
+
+  if (count($items) <= 0) {
+    return $output;
+  }
+
+  $count = count($items);
+  if ($title == NULL || empty($title)) {
+    $title = format_plural($count, '1 item', '@count items');
+  }
+
+  $output .= '<div class="btn-group">';
+  $output .= '<button type="button" class="btn btn-default dropdown-toggle" data-toggle="dropdown">';
+  $output .= '<span class="caret"></span>';
+  $output .= $title;
+  $output .= '</button>';
+  $output .= theme('item_list', array('items' => $items, 'attributes'=>array('class'=>array('dropdown-menu'), 'role'=>'menu')));
+  $output .= '</div>';
+
+  return $output;
+}

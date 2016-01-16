@@ -1,0 +1,9 @@
+name = Uber queue
+description = Autor - Frantsuzzz.
+core = 7.x
+package = Frantsuzzz
+
+;dependencies[] = background_queue
+dependencies[] = queue_ui
+
+;files[] = ProductsMigration.inc

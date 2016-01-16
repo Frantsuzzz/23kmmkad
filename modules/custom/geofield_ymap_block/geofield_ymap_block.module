@@ -1,0 +1,182 @@
+<?php
+/**
+ * Implements hook_block_info().
+ */
+function geofield_ymap_block_block_info() {
+  $blocks['geofield_ymap_block'] = array(
+    'info' => t('Yandex.maps block'),
+    'cache' => DRUPAL_CACHE_GLOBAL,
+  );
+  return $blocks;
+}
+
+/**
+ * Implements hook_block_view().
+ */
+function geofield_ymap_block_block_view($delta = '') {
+  $block = array();
+
+  switch ($delta) {
+    case 'geofield_ymap_block':
+      $block['subject'] = t('Yandex maps');
+      $block['content'] = array(
+        '#markup' => _geofield_ymap_block_block_view(),
+        '#attached' => array(
+          'library' => array(
+            array('geofield_ymap', 'geofield_ymap'),
+          )
+        ),
+      );
+      break;
+  }
+  return $block;
+}
+
+/**
+ * Implements hook_block_configure().
+ */
+function geofield_ymap_block_block_configure($delta = '') {
+  $form = array();
+  if ($delta == 'geofield_ymap_block') {
+    $settings = variable_get('geofield_ymap_block', _geofield_ymap_block_settings_default());
+    $form['map_geo'] = array(
+      '#type' => 'geofield_ymap',
+      '#title' => 'Location',
+      '#description' => 'Select control and click to map for add object on map. Double click on object to remove it.',
+      '#map_multiple' => TRUE,
+      '#map_center' => '37.62221595263608,55.75378270800939', // Moscow
+      '#map_zoom' => 12,
+      '#map_auto_centering' => TRUE,
+      '#map_auto_zooming' => TRUE,
+      '#map_object_types' => array('point', 'line', 'polygon'),
+      '#required' => TRUE,
+      '#map_objects' => $settings['map_geo']['objects'],
+    );
+    $form['map'] = array(
+      '#type' => 'fieldset',
+      '#title' => t('Visible settings'),
+      '#collapsible' => TRUE,
+      '#collapsed' => TRUE,
+    );
+
+    $form['map']['map_type'] = array(
+      '#type' => 'select',
+      '#title' => t('Map type'),
+      '#options' => _geofield_ymap_get_map_types(),
+      '#default_value' => $settings['map_type'],
+    );
+
+    $form['map']['map_object_preset'] = array(
+      '#type' => 'textfield',
+      '#title' => t('Preset name'),
+      '#description' => t('<a href="@url" target="_blank">Preset name</a>. Example: <code>islands#blackDotIcon</code>', array(
+        '@url' => 'http://api.yandex.ru/maps/doc/jsapi/2.1/ref/reference/option.presetStorage.xml',
+      )),
+      '#default_value' => $settings['map_object_preset'],
+      '#size' => 30,
+    );
+
+    $form['map']['map_object_balloon'] = array(
+      '#type' => 'textfield',
+      '#title' => t('Balloon content'),
+      '#description' => t('Balloon content. Allowed tokens.'),
+      '#default_value' => $settings['map_object_balloon'],
+      '#size' => 50,
+    );
+    if (module_exists('token')) {
+      $form['map']['take_control_fb_roles_fieldset']['token_tree'] = array(
+        '#type' => 'fieldset',
+        '#title' => t('Replacement patterns'),
+        '#collapsible' => TRUE,
+        '#collapsed' => TRUE,
+        '#description' => theme('token_tree', array('token_types' => array('current-user'))),
+        '#weight' => 10,
+      );
+    }
+
+    $form['map']['map_controls'] = array(
+      '#type' => 'textfield',
+      '#title' => t('Controls'),
+      '#description' => t('<a href="@url" target="_blank">Controls</a> through a comma, or controls set name. Use <code>&lt;none&gt;</code> to hide all controls. Default set name: <code>default</code>', array(
+        '@url' => 'http://api.yandex.ru/maps/doc/jsapi/2.1/ref/reference/control.Manager.xml#add',
+      )),
+      '#default_value' => $settings['map_controls'],
+      '#size' => 30,
+    );
+
+    $form['map']['map_behaviors'] = array(
+      '#type' => 'textfield',
+      '#title' => t('Behaviors'),
+      '#description' => t('<a href="@url" target="_blank">Map behaviors</a> through a comma. Use <code>&lt;none&gt;</code> to disable all behaviors. Default value: <code>default</code>', array(
+        '@url' => 'http://api.yandex.ru/maps/doc/jsapi/2.1/ref/reference/map.behavior.Manager.xml#param-behaviors',
+      )),
+      '#default_value' => $settings['map_behaviors'],
+      '#size' => 30,
+    );
+
+  }
+  return $form;
+}
+
+/**
+ * Implements hook_block_save().
+ */
+function geofield_ymap_block_block_save($delta = '', $edit = array()) {
+  if ($delta == 'geofield_ymap_block') {
+
+// Set balloon content
+    if (!empty($edit['map_object_balloon']) && !empty($edit['map_geo']['objects'])) {
+      $ballon_contents = explode(';', $edit['map_object_balloon']);
+      $map_objects = drupal_json_decode($edit['map_geo']['objects']);
+      $ballon_content_default = token_replace($ballon_contents[0]);
+
+      foreach ($map_objects['features'] as $delta => &$map_object) {
+        $ballon_content = isset($ballon_contents[$delta]) ? token_replace($ballon_contents[$delta]) : $ballon_content_default;
+        $map_object['properties']['balloonContent'] = $ballon_content;
+      }
+      $edit['map_geo']['objects'] = _geofield_ymap_json_encode($map_objects);
+    }
+
+    $settings = array(
+      'map_type' => $edit['map_type'],
+      'map_object_preset' => $edit['map_object_preset'],
+      'map_object_balloon' => $edit['map_object_balloon'],
+      'map_controls' => $edit['map_controls'],
+      'map_behaviors' => $edit['map_behaviors'],
+      'map_geo' => $edit['map_geo'],
+    );
+    variable_set('geofield_ymap_block', $settings);
+  }
+}
+
+/*
+ * Default settings
+ */
+function _geofield_ymap_block_settings_default() {
+  return array(
+    'map_type' => 'yandex#map',
+    'map_object_preset' => '',
+    'map_object_balloon' => '',
+    'map_controls' => 'fullscreenControl',
+    'map_behaviors' => 'default',
+    'map_geo' => array('objects' => ''),
+  );
+}
+
+/*
+ * Render block
+ */
+function _geofield_ymap_block_block_view() {
+  $settings = variable_get('geofield_ymap_block', _geofield_ymap_block_settings_default());
+
+  $map = array(
+    '#theme' => 'geofield_ymap',
+    '#map_type' => $settings['map_type'],
+    '#map_object_preset' => $settings['map_object_preset'],
+    '#map_controls' => $settings['map_controls'],
+    '#map_behaviors' => $settings['map_behaviors'],
+    '#map_objects' => $settings['map_geo']['objects'],
+  );
+
+  return render($map);
+}

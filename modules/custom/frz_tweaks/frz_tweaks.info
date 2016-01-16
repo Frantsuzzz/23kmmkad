@@ -1,0 +1,6 @@
+name = Frantsuzzz tweaks
+description = Autor - Frantsuzzz.
+core = 7.x
+package = Frantsuzzz
+
+files[] = frz_tweaks_helper.inc

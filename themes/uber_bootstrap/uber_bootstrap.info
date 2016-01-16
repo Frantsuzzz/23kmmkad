@@ -1,0 +1,72 @@
+name = Frz Bootstrap
+description = A Bootstrap Sub-theme.
+core = 7.x
+base theme = bootstrap
+
+
+;;;;;;;;;;;;;;;;;;;;;
+;; Regions
+;;;;;;;;;;;;;;;;;;;;;
+regions[header_top] = 'Top line'
+regions[header_1] = 'Header 1'
+regions[header_2] = 'Header 2'
+regions[top_bar] = 'Top Bar'
+regions[highlighted] = 'Highlighted'
+regions[content_top] = 'Content Top'
+regions[help] = 'Help'
+regions[content] = 'Content'
+regions[sidebar_first] = 'Primary'
+regions[footer_1] = 'Footer 1'
+regions[footer_2] = 'Footer 2'
+regions[footer_3] = 'Footer 3'
+regions[footer] = 'Footer'
+regions[page_top] = 'Page top'
+regions[lp_bottom] = 'LandingPage bottom'
+regions[node_bottom] = Node bottom
+regions[product_right] = Product right
+;;;;;;;;;;;;;;;;;;;;;
+;; Stylesheets
+;;;;;;;;;;;;;;;;;;;;;
+
+;stylesheets[all][] = css/bootstrap.min.css
+stylesheets[all][] = less/style.less
+
+; For information on choosing the desired method, please read the Drupal
+; Bootstrap sub-theme "how-to" documentation:
+; https://drupal.org/node/1978010
+
+; ;----------------------------------
+; ; METHOD 1: Bootstrap Source Files
+; ;----------------------------------
+;
+; ;;;;;;;;;;;;;;;;;;;;;
+; ;; Scripts
+; ;;;;;;;;;;;;;;;;;;;;;
+;
+scripts[] = 'bootstrap/js/affix.js'
+scripts[] = 'bootstrap/js/alert.js'
+scripts[] = 'bootstrap/js/button.js'
+scripts[] = 'bootstrap/js/carousel.js'
+scripts[] = 'bootstrap/js/collapse.js'
+scripts[] = 'bootstrap/js/dropdown.js'
+scripts[] = 'bootstrap/js/modal.js'
+scripts[] = 'bootstrap/js/tooltip.js'
+scripts[] = 'bootstrap/js/popover.js'
+scripts[] = 'bootstrap/js/scrollspy.js'
+scripts[] = 'bootstrap/js/tab.js'
+scripts[] = 'bootstrap/js/transition.js'
+
+scripts[] = 'js/readmore.min.js'
+scripts[] = 'js/frz_bootstrap.js'
+;
+; ; Disable BootstrapCDN if using Bootstrap source files in your sub-theme.
+settings[bootstrap_cdn] = ''
+
+
+; ;-------------------------
+; ; METHOD 2: Bootstrap CDN
+; ;-------------------------
+;
+; Method 2 uses BootstrapCDN, the only thing you might need to provide here
+; is overrides to Bootstrap theme settings. Copy them here from the base theme
+; to override.

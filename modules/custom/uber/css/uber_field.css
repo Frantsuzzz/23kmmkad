@@ -1,0 +1,24 @@
+.body-spoler .body-spoler-visible{
+  display:block;
+}
+
+.body-spoler .body-spoler-hidden{
+  display:none;
+}
+
+
+.body-spoler.open .body-spoler-visible{
+  display:none;
+}
+
+.body-spoler.open .body-spoler-hidden{
+  display:block;
+}
+
+.body-spoler-button{
+  cursor:pointer;
+}
+
+.body-spoler-button{
+  float:right;
+}

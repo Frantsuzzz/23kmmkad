@@ -1,0 +1,1 @@
+(function ($) {    Drupal.behaviors.uber_flexslider = {        attach: function (context, settings) {    }    }})(jQuery);

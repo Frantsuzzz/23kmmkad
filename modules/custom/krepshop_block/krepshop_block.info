@@ -1,0 +1,6 @@
+name = Krepshop Blocks
+package = Krepshop.by
+description = Custom blocks and block-related logic.
+core = 7.x
+
+dependencies[] = block

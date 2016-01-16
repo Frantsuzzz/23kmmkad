@@ -1,0 +1,279 @@
+<?php
+
+/**
+ * Implements hook_block_info().
+ */
+function krepshop_block_block_info() {
+  $blocks['krepshop_block_categories'] = array(
+    'info' => 'krepshop categories',
+    'cache' => DRUPAL_CACHE_PER_PAGE,
+    'region' => 'footer',
+  );
+
+  return $blocks;
+}
+
+/**
+ * Implements hook_block_view().
+ */
+function krepshop_block_block_view($delta = '') {
+  $block = array();
+  switch ($delta) {
+    case 'krepshop_block_categories':
+      $block['subject'] = 'Navigation';
+      $block['content'] = _krepshop_block_categories_menu_print();
+      break;
+
+  }
+  return $block;
+}
+
+/**
+ * Render catalog
+ */
+function _krepshop_block_categories_menu_print() {
+  $output = '';
+  $term = FALSE;
+  $args = arg();
+  $max_depth = NULL;
+
+  if (count($args) == 2 && $args[0] == 'catalog' && is_numeric($args[1])) {
+    $term = taxonomy_term_load($args[1]);
+  }
+
+  if (!$term && count($args) == 3 && $args[0] == 'taxonomy' && $args[1] == 'term' && is_numeric($args[2])) {
+    $term = taxonomy_term_load($args[2]);
+  }
+
+  if (!$term) {
+    return $output;
+  }
+
+  $term->parents = _krepshop_block_taxonomy_get_parents_array($term->tid);
+
+  if (in_array(0, $term->parents)) {
+    //   return $output;
+    $max_depth = 1;
+    $terms2 = array();
+  }
+  else {
+    $terms2 = taxonomy_get_tree($term->vid, $term->parents[0], 1);
+  }
+
+  //Наш термин является дочерним. Можно рендерить блок
+  //грузим ветку с нашим термином
+  $terms = taxonomy_get_tree($term->vid, $term->tid, $max_depth);
+  $terms = array();
+  $terms = array_merge($terms, $terms2);
+
+  //Нужно найти главного родителя, что бы не грузить весь каталог
+  //все родители термина
+  $parents = taxonomy_get_parents_all($term->tid);
+  $active_parents_tids = array();
+  foreach ($parents as $key => $parent) {
+    $active_parents_tids[] = $parent->tid;
+    $parents[$key]->parents = _krepshop_block_taxonomy_get_parents_array($parent->tid);
+    $terms[] = $parents[$key];
+  }
+
+
+  //формируем иерархию подкатегорий
+  $items = _krepshop_block_categories_tree($terms, $term->tid, $active_parents_tids);
+  $output = theme('item_list', array(
+    'items' => $items,
+    'attributes' => array('class' => 'nav')
+  ));
+  return $output;
+}
+
+/**
+ * Helper for mymodule_taxonomy_tree()
+ */
+function _krepshop_block_categories_tree($terms, $this_tid, $active_tids, $parent = 0) {
+  $items = array();
+
+  foreach ($terms as $term) {
+    if (in_array($parent, $term->parents)) {
+      $class = array();
+      if (in_array($term->tid, $active_tids)) {
+        $class[] = 'active-trail';
+      }
+
+      $label = ($this_tid == $term->tid) ? $term->name : l($term->name, 'taxonomy/term/' . $term->tid, array('attributes' => array('class' => $class)));
+      $childrens = _krepshop_block_categories_tree($terms, $this_tid, $active_tids, $term->tid);
+      $items[$term->tid] = array(
+        'data' => $label,
+        'children' => $childrens,
+      );
+    }
+  }
+
+  return $items;
+}
+
+
+/*
+ *
+ */
+function _krepshop_block_taxonomy_get_parents_array($tid) {
+  $items = array();
+  $parents = taxonomy_get_parents($tid);
+  foreach ($parents as $parent) {
+    $items[] = $parent->tid;
+  }
+
+  if (count($items) == 0) {
+    $items[0] = 0;
+  }
+
+  return $items;
+}
+
+function krepshop_block_form_views_exposed_form_alter(&$form, $form_state) {
+
+  $form_ids = array(
+    'views-exposed-form-uber-catalog-block-catalog-terms',
+    'views-exposed-form-uc-catalog-term-panel-default',
+  );
+
+  $second = array();
+
+  $fields = array(
+    'field_brand',
+    'field_form',
+    'field_longrch',
+    'field_longm',
+    'field_longmm',
+    'field_class',
+    'field_mosh',
+    'field_uv',
+    'field_typehvost',
+    'field_widthmm',
+  );
+
+  if (array_search($form['#id'], $form_ids) !== FALSE) {
+    $args = arg();
+    $tid = FALSE;
+    $items = array();
+
+    if (count($args) == 2 && $args[0] == 'catalog' && is_numeric($args[1])) {
+      $tid = $args[1];
+    }
+    if (!$tid && count($args) == 3 && $args[0] == 'taxonomy' && $args[1] == 'term' && is_numeric($args[2])) {
+      $tid = $args[2];
+    }
+
+    //Если у текущей страницы есть термин, тогда преобразуем формы
+    if ($tid) {
+      $form['#action'] = 'taxonomy/term/' . $tid;
+
+      //соберем данные фильтров из GET
+      foreach ($fields as $field) {
+        $field_tid = $field . '_tid';
+        if(isset($_GET[$field_tid]) && is_numeric($_GET[$field_tid])){
+          $second[$field] = check_plain($_GET[$field_tid]);
+        }
+      }
+
+      //обработаем списки для нужных полей
+      foreach ($fields as $field) {
+        $field_tid = $field . '_tid';
+        if (isset($form[$field_tid])) {
+          $options_new = _krepshop_block_exposed_options_new($form[$field_tid], $tid, $field, $second);
+
+          if (count($options_new) > 1 || (count($options_new) <= 1 && !isset($options_new['All']))) {
+            $form[$field_tid]['#options'] = $options_new;
+          }
+          else {
+            //$form[$field_tid]['#options'] = $options_new;
+            $form[$field_tid]['#access'] = FALSE;
+            unset($form['#info']['filter-' . $field_tid]);
+
+          }
+        }
+      }
+    }
+  }
+}
+
+
+function _krepshop_block_exposed_options_new($element, $tid, $field_name, $second = array()) {
+  $options_new = array();
+  $field_tid = $field_name . '_tid';
+  $table_name = 'field_data_' . $field_name;
+
+  $query = db_select($table_name, 'br');
+  $query->innerJoin('field_data_taxonomy_catalog', 'c', 'c.entity_id = br.entity_id');
+  $query->fields('br', array($field_tid));
+  $query->condition('br.entity_type', 'node');
+  $query->condition('c.taxonomy_catalog_tid', $tid);
+  $query->groupBy('br.' . $field_tid);
+
+  if(count($second) > 0){
+    $k = 0;
+    foreach($second as $exposed_name => $exposed_value){
+      if(!isset($second[$field_name])){
+        $filter_table_name = 'field_data_' . $exposed_name;
+        $filter_field_tid = $exposed_name . '_tid';
+        $query->innerJoin($filter_table_name, 'ex' . $k, 'ex' . $k . '.entity_id = br.entity_id');
+        $query->condition('ex' . $k . '.' . $filter_field_tid, $exposed_value);
+        $k++;
+      }
+    }
+  }
+
+  $result = $query->execute();
+  $options = $element['#options'];
+
+  foreach ($result as $term_tid) {
+    $id = $term_tid->{$field_tid};
+    foreach ($options as $key => $option) {
+      if (is_numeric($key)) {
+
+        if (isset($option->option)) {
+          //Если в массивае есть option
+          if (isset($option->option[$id])) {
+            $options_new[$key] = $options[$key];
+          }
+        }
+        else {
+          if ($id == $key) {
+            $options_new[$key] = $options[$key];
+          }
+        }
+
+
+      }
+      else {
+        $options_new[$key] = $options[$key];
+      }
+    }
+  }
+
+  if (count($options_new) == 0) {
+    $options_new['All'] = '- Все -';
+  }
+
+  return $options_new;
+}
+
+
+/**
+ * Implements hook_views_pre_view().
+ */
+function krepshop_block_views_pre_view(&$view, &$display_id, &$args) {
+  if ($view->name == 'uc_catalog_term' && $display_id == 'panel_grid') {
+    if (isset($args[0]) && is_numeric($args[0])) {
+      $term = taxonomy_term_load($args[0]);
+      if ($term) {
+        $view->override_url = 'taxonomy/term/' . $term->tid;
+        $view->override_path = 'taxonomy/term/' . $term->tid;
+        $view_mode = field_get_items('taxonomy_term', $term, 'field_view_mode');
+        if (isset($view_mode[0]['value']) && $view_mode[0]['value']) {
+          //меняем вид отображения
+          $view->set_display('panel_table');
+        }
+      }
+    }
+  }
+}

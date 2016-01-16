@@ -1,0 +1,483 @@
+<?php
+require_once 'uber_queue.import.inc';
+/**
+ * Implements hook_menu().
+ */
+function uber_queue_menu() {
+  $items['admin/config/system/uber_queue'] = array(
+    'title'            => 'Uber queue manager',
+    'description'      => 'View and manage Uber queues',
+    'page callback'    => 'drupal_get_form',
+    'page arguments'   => array('uber_queue_form'),
+    'access arguments' => array('admin queue_ui'),
+    'file'             => 'uber_queue.admin.inc',
+  );
+  $items['admin/config/system/uber_queue/report'] = array(
+    'title'            => 'Uber queue report',
+    'description'      => 'View Uber queues statistics',
+    'page callback'    => 'drupal_get_form',
+    'page arguments'   => array('uber_queue_report_form'),
+    'access arguments' => array('admin queue_ui'),
+    'file'             => 'uber_queue.page.inc',
+  );
+  $items['node/%node/update'] = array(
+    'title'            => 'Node update',
+    'page callback'    => 'drupal_get_form',
+    'page arguments'   => array('uber_queue_node_update_form', 1),
+    'access arguments' => array('admin queue_ui'),
+    'type'             => MENU_LOCAL_TASK,
+    'file'             => 'uber_queue.form.inc',
+    'weight'           => 100,
+  );
+  return $items;
+}
+
+/**
+ * Implements hook_cronapi().
+ */
+
+/*
+function uber_queue_cronapi($op, $job = NULL) {
+  $items = array();
+
+  $uber_queue_count = variable_get('uber_queue_count', 10);
+
+  $items['uber_queue_main'] = array(
+    'description' => 'Send nid to Queue',
+    'rule'        => '0 23 * * *',
+    'arguments'   => array($uber_queue_count),
+    'callback'    => 'uber_queue_select_content',
+  );
+  return $items;
+}
+*/
+
+
+function uber_queue_cron() {
+  if (date('G') == 0) { // At 19'o clock
+    uber_queue_run(FALSE, TRUE);
+  }
+}
+
+/*
+ * Добавим операцию в VBO для обновления товаров
+ */
+function uber_queue_action_info() {
+  return array(
+    'uber_queue_product_update_action' => array(
+      'type'         => 'node',
+      'label'        => t('UPDATE product'),
+      'configurable' => FALSE,
+      'pass rows'    => TRUE,
+    ),
+  );
+}
+
+function uber_queue_product_update_action(&$node, $context = array()) {
+  if ($node && $node->type == 'product') {
+    uber_queue_update_node($node);
+  }
+}
+
+/*
+ * ФОрмируем очередь для импорта и отправляем ее на обработку
+ * через background_queue
+ */
+function uber_queue_run($reload = FALSE, $cron = FALSE) {
+  $queue_name = 'uber_main_queue';
+  $uber_queue_count = variable_get('uber_queue_count', 10);
+//  $uber_queue_number = variable_get('uber_queue_number', 0);
+  $uber_queue_play = variable_get('uber_queue_play', 0);
+
+  $queue = DrupalQueue::get($queue_name);
+  if ($queue->numberOfItems() <= 0 || $reload) {
+    //формируем очередь
+    uber_queue_select_content($uber_queue_count);
+  }
+  /*
+  if ($uber_queue_play > 0) {
+    if ($cron) {
+      background_queue_run_from_cron($queue_name);
+    }
+    else {
+      background_queue_run($queue_name);
+    }
+  }
+  */
+}
+
+/**
+ * Cron function.
+ */
+
+function uber_queue_select_content($count, $uber_queue_number = FALSE) {
+  static $start;
+  $count_q = 0;
+  $limit = variable_get('uber_queue_limit', 0);
+  if (empty($start)) {
+    $start = 0;
+  }
+
+  $queue = DrupalQueue::get('uber_main_queue');
+  $queue->deleteQueue();
+
+  if ($uber_queue_number === FALSE) {
+    $uber_queue_number = variable_get('uber_queue_number', 0);
+    $uber_queue_number++;
+    variable_set('uber_queue_number', $uber_queue_number);
+  }
+
+  //Найдем общее количество записей в источнике
+  $query = db_select('go2');
+  $query->addExpression('COUNT(*)');
+  $count_items = $query->execute()->fetchField();
+
+
+  //Ограничим количество элементов, если это указано в настройках
+  if ($count_items > $limit && $limit > 0) {
+    $count_items = $limit;
+  }
+
+  if ($count_items > 0) {
+    $queue = DrupalQueue::get('uber_main_queue');
+    $queue->createQueue();
+
+    for ($i = 0; $i < $count_items; $i += $count) {
+      $count_q++;
+      $options = array(
+        'start' => $i,
+        'count' => $count,
+      );
+      // Sending array with nodes.
+      $queue->createItem($options);
+      // Set the interval 10s.
+      $queue->claimItem(0.2 * $count_q);
+    }
+
+    if ($count_q * $count < $count_items) {
+      $count_q++;
+      $options = array(
+        'start' => $count_q * $count,
+        'count' => $count,
+      );
+      $queue->createItem($options);
+      $queue->claimItem(0.2 * $count_q);
+    }
+
+    //Изменим статус товаров, которые не попали в текущий импорт
+    if ($limit <= 0) {
+      $count_q++;
+      $options = array(
+        'clear_status_num' => $uber_queue_number,
+      );
+      $queue->createItem($options);
+      $queue->claimItem(0.2 * $count_q);
+    }
+
+    //History
+    uber_queue_log('uber_queue_history', array(
+      'start' => time(),
+      'count' => $count_items
+    ));
+
+    //Удалим старую историю
+    _uber_queue_history_clear($uber_queue_number);
+  }
+  else {
+    return;
+  }
+}
+
+/**
+ * Implements hook_cron_queue_info().
+ */
+function uber_queue_cron_queue_info() {
+  $queues = array();
+  $queues['uber_main_queue'] = array(
+    // Queue worker function.
+    'worker callback' => 'uber_queue_function',
+    // The function will be work 10 seconds.
+    'time'            => 40,
+    'skip on cron'    => TRUE,
+  );
+  return $queues;
+}
+
+/**
+ * Queue function.
+ */
+function uber_queue_function($data) {
+  $uber_queue_number = variable_get('uber_queue_number', 0);
+  $time_start = time();
+  $count_item = 0;
+  $items = array();
+  $status_ops = array(
+    'ignored' => 0,
+    'updated' => 0,
+    'new'     => 0,
+    'error'   => 0,
+  );
+
+  if (!empty($data)) {
+
+    if (isset($data['start']) && isset($data['count'])) {
+      //Нужно вытягивать ID из таблицы-источника
+      $result = db_select('go2', 'n')
+        ->fields('n', array('ID'))
+        ->condition('HASH', '', '<>')
+        ->range($data['start'], $data['count'])
+        ->orderBy('n.ID', 'ASC')->execute();
+
+      foreach ($result as $item) {
+        // $items[] = uber_queue_load($item->ID);
+
+        $row = uber_queue_load($item->ID);
+        $node = new stdClass();
+        $status_op = uber_queue_import($node, $row);
+
+        if (isset($status_ops[$status_op])) {
+          $status_ops[$status_op]++;
+        }
+        $count_item++;
+      }
+    }
+
+    //Очищаем статус у товаров, которые не попали в данную очередь
+    if (isset($data['clear_status_num']) && is_numeric($data['clear_status_num'])) {
+      $nids = array();
+      $result = db_select('uber_queue_map', 'n')
+        ->fields('n', array('nid'))
+        ->condition(
+          db_or()
+            ->condition('n.queue_id', $data['clear_status_num'], '<')
+            ->condition('n.queue_id', NULL, 'IS NULL')
+        )
+        ->execute();
+      foreach ($result as $node) {
+        $nids[] = $node->nid;
+      }
+
+      if (count($nids) > 0) {
+        db_update('node')
+          ->fields(array('status' => 0))
+          ->condition('nid', $nids, 'IN')
+          ->execute();
+      }
+    }
+
+  }
+
+  //History and LOG
+  $param = array(
+    'queue_id' => $uber_queue_number,
+    'start'    => $time_start,
+    'end'      => time(),
+    'count'    => $count_item,
+  );
+
+
+  foreach ($status_ops as $key => $value) {
+    if ($value > 0) {
+      $param[$key] = $value;
+    }
+  }
+
+  uber_queue_log('uber_queue_history', array('last' => time()));
+  uber_queue_log('uber_queue_history_items', $param);
+}
+
+/**
+ * Запись статистики
+ */
+function uber_queue_log($table, $param) {
+  $uber_queue_number = variable_get('uber_queue_number', 0);
+  $debug = variable_get('uber_queue_debug', 0);
+
+  if ($debug <= 0 || ($debug == 1 && $table == 'uber_queue_history_items')) {
+    return FALSE;
+  }
+
+  if ($table == 'uber_queue_history') {
+    //History
+    db_merge($table)
+      ->key(array('id' => $uber_queue_number))
+      ->fields($param)
+      ->execute();
+  }
+  else {
+    // Drupal 7, dynamic query
+    db_insert($table)
+      ->fields($param)
+      ->execute();
+  }
+  return TRUE;
+}
+
+/**
+ * Implementation hook_node_delete()
+ **/
+function uber_queue_node_delete($node) {
+  if ($node->type == 'product') {
+    db_delete('uber_queue_map')
+      ->condition('nid', $node->nid)
+      ->execute();
+  }
+}
+
+/**
+ * Implementation hook_taxonomy_term_presave()
+ * Очистим кеш с синонимами для данного словаря
+ */
+function uber_queue_taxonomy_term_presave($term) {
+  db_delete('cache')
+    ->condition('cid', db_like('uber_queue_sinonim_' . $term->vid) . '%', 'LIKE')
+    ->execute();
+}
+
+/**
+ * Загрузка данных из источника
+ * по номеру
+ */
+function uber_queue_load($id) {
+  $item = FALSE;
+  $item = db_select('go2', 'g')
+    ->fields('g')
+    ->condition('g.ID', $id)
+    ->execute()
+    ->fetchObject();
+
+  if ($item) {
+    $item_map = db_select('uber_queue_map', 'n')
+      ->fields('n')
+      ->condition('n.sourceid', $item->HASH)
+      ->execute()
+      ->fetchObject();
+
+    $item->nid = (isset($item_map->nid) && is_numeric($item_map->nid)) ? $item_map->nid : FALSE;
+    $item->queue_number = (isset($item_map->queue_id) && is_numeric($item_map->queue_id)) ? $item_map->queue_id : 0;
+  }
+
+  return $item;
+}
+
+/**
+ * Загрузка данных из источника
+ * по HASH. Т.к. может быть несколько строк, возвращает массив
+ */
+function uber_queue_load_hash($hash) {
+  $items = array();
+  $items = db_select('go2', 'g')
+    ->fields('g')
+    ->condition('g.HASH', $hash)
+    ->execute()
+    ->fetchAllAssoc('ID');
+
+
+  $item_map = db_select('uber_queue_map', 'n')
+    ->fields('n')
+    ->condition('n.sourceid', $hash)
+    ->execute()
+    ->fetchObject();
+
+  $item_nid = (isset($item_map->nid) && is_numeric($item_map->nid)) ? $item_map->nid : FALSE;
+  $item_queue_number = (isset($item_map->queue_id) && is_numeric($item_map->queue_id)) ? $item_map->queue_id : 0;
+
+  foreach ($items as $key => $value) {
+    $items[$key]->nid = $item_nid;
+    $items[$key]->queue_number = $item_queue_number;
+  }
+  return $items;
+}
+
+/*
+ * Запуск обрабоки очереди
+ *
+ */
+function uber_queue_cron_run() {
+
+  // Reset expired items in the default queue implementation table. If that's
+  // not used, this will simply be a no-op.
+
+  db_update('queue')
+    ->fields(array(
+      'expire' => 0,
+    ))
+    ->condition('expire', 0, '<>')
+    ->condition('expire', REQUEST_TIME, '<')
+    ->execute();
+
+  // Allow execution to continue even if the request gets canceled.
+  @ignore_user_abort(TRUE);
+
+  // Prevent session information from being saved while cron is running.
+  $original_session_saving = drupal_save_session();
+  drupal_save_session(FALSE);
+
+  // Force the current user to anonymous to ensure consistent permissions on
+  // cron runs.
+  $original_user = $GLOBALS['user'];
+  $GLOBALS['user'] = drupal_anonymous_user();
+
+  // Try to allocate enough time to run all the hook_cron implementations.
+  drupal_set_time_limit(0);
+
+  $return = FALSE;
+  // Grab the defined cron queues.
+  $queues = module_invoke_all('cron_queue_info');
+  drupal_alter('cron_queue_info', $queues);
+
+  foreach ($queues as $queue_name => $info) {
+    //ограничим только одной очередью
+    if ($queue_name !== 'uber_main_queue') {
+      continue;
+    }
+
+    /*
+    if (!empty($info['skip on cron'])) {
+      // Do not run if queue wants to skip.
+      continue;
+    }
+*/
+    $function = $info['worker callback'];
+    $end = time() + (isset($info['time']) ? $info['time'] : 15);
+    $queue = DrupalQueue::get($queue_name);
+
+    while (time() < $end && ($item = $queue->claimItem())) {
+      try {
+        $function($item->data);
+        $queue->deleteItem($item);
+      } catch (Exception $e) {
+        // In case of exception log it and leave the item in the queue
+        // to be processed again later.
+        watchdog_exception('cron', $e);
+      }
+    }
+  }
+
+  // Restore the user.
+  $GLOBALS['user'] = $original_user;
+  drupal_save_session($original_session_saving);
+
+  $return = TRUE;
+
+  return $return;
+}
+
+/**
+ *
+ * Очищаем историю событий со старых очередей
+ */
+function _uber_queue_history_clear($uber_queue_number) {
+  //Удалим старую историю
+  $uber_queue_number_old = $uber_queue_number - 2;
+  db_delete('uber_queue_history')
+    ->condition('id', $uber_queue_number_old, '<')
+    ->execute();
+  db_delete('uber_queue_history_items')
+    ->condition('queue_id', $uber_queue_number_old, '<')
+    ->execute();
+  db_delete('uber_queue_log')
+    ->condition('queue_id', $uber_queue_number_old, '<')
+    ->execute();
+  return TRUE;
+}

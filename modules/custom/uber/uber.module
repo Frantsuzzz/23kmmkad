@@ -1,0 +1,502 @@
+<?php
+// @see https://twitter.com/drupal_review/status/235380645134745601
+require_once 'uber.field.inc';
+require_once 'uber.modal.inc';
+
+/**
+ * Implements hook_menu().
+ */
+function uber_menu() {
+  $items = array();
+  $items['ajax/%ctools_js/%node/%node'] = array(
+    'page callback'     => 'uber_webform_order_ajax',
+    'page arguments'    => array(1, 2, 3),
+    'access callback'   => '_uber_ajaxwebform_node_access',
+    'access arguments'  => array(2),
+    'delivery callback' => 'ajax_deliver',
+    'theme callback'    => 'ajax_base_page_theme',
+    'type'              => MENU_CALLBACK,
+  );
+  return $items;
+}
+
+/**
+ * Implements hook_theme().
+ */
+function uber_theme() {
+  return array(
+    'uber_comment'      => array(
+      'variables' => array(
+        'msg'   => FALSE,
+        'img'   => FALSE,
+        'name'  => FALSE,
+        'media' => TRUE,
+        'right' => TRUE
+      ),
+      'template'  => 'uber_comment'
+    ),
+    'uber_search_front' => array(
+      'variables' => array(
+        'ticket' => FALSE
+      ),
+      'template'  => 'uber_search_front'
+    ),
+  );
+}
+
+/**
+ * Implements hook_block_info().
+ */
+function uber_block_info() {
+  $blocks['uber_search_front'] = array(
+    'info'   => 'Search front',
+    'cache'  => DRUPAL_CACHE_GLOBAL,
+    'region' => 'footer',
+  );
+  return $blocks;
+}
+
+/**
+ * Implements hook_block_view().
+ */
+function uber_block_view($delta = '') {
+  $block = array();
+  switch ($delta) {
+    case 'uber_search_front':
+      $block['subject'] = 'Search front';
+      $block['content'] = theme('uber_search_front', array(
+        'ticket' => uber_load_ticket('search_page'),
+      ));
+      break;
+  }
+
+  return $block;
+}
+
+/**
+ * Implements hook_entity_info_alter().
+ */
+function uber_entity_info_alter(&$entity_info) {
+  $entity_info['taxonomy_term']['view modes']['teaser'] = array(
+    'label'           => t('Teaser'),
+    'custom settings' => TRUE,
+  );
+  $entity_info['taxonomy_term']['view modes']['teaser_mini'] = array(
+    'label'           => t('Teaser mini'),
+    'custom settings' => FALSE,
+  );
+  $entity_info['node']['view modes']['teaser_mini'] = array(
+    'label'           => t('Teaser mini'),
+    'custom settings' => FALSE,
+  );
+}
+
+function uber_menu_alter(&$items) {
+  $items['taxonomy/term/%taxonomy_term/edit']['context'] = MENU_CONTEXT_PAGE | MENU_CONTEXT_INLINE;
+  $items['node/%node/clone/%clone_token']['type'] = MENU_LOCAL_TASK;
+}
+
+function uber_views_pre_render(&$view) {
+  if ($view->name == 'tags' && $view->current_display == 'block_brand') {
+    drupal_add_js(path_to_theme() . '/js/flex.js');
+  }
+}
+
+function uber_form_alter(&$form, &$form_state, $form_id) {
+  //Форма - "Быстрая покупка"
+  if ($form_id == 'webform_client_form_41556') {
+    $arg = arg();
+
+    $nid_product = FALSE;
+    if (count($arg) == 2 && $arg[0] == 'node' && is_numeric($arg[1])) {
+      $nid_product = $arg[1];
+    }
+    if (count($arg) == 4 && $arg[0] == 'ajax' && is_numeric($arg[2]) && is_numeric($arg[3])) {
+      $nid_product = $arg[3];
+    }
+
+    if ($nid_product) {
+      $node = node_load($nid_product);
+
+      if ($node && $node->type == 'product') {
+        $form['submitted']['product']['#default_value'] = '[id:' . $nid_product . ']';
+        $form['submitted']['product']['#disabled'] = TRUE;
+        $form['submitted']['product']['#prefix'] = '<div style="display:none">';
+        $form['submitted']['product']['#suffix'] = '</div>';
+
+        //Загрузим тикет на форму "Быстрая покупка" ($type = 'fast_order')
+        $ticket = uber_load_ticket('fast_order', $node);
+        $form['#prefix'] = $ticket;
+      }
+    }
+  }
+
+  //Форма - "Заявка на консультацию"
+  if ($form_id == 'webform_client_form_41557') {
+
+    if (isset($form['submitted']['block_description']['#markup'])) {
+      $format = $form['submitted']['block_description']['#format'];
+      $description = check_markup($form['submitted']['block_description']['#markup'], $format);
+      $form['submitted']['block_description']['#access'] = FALSE;
+      $form['#prefix'] = '<div class="form-prefix">' . $description . '</div>';
+    }
+  }
+
+  //Форма - "Связаться с менеджером"
+  if ($form_id == 'webform_client_form_41559') {
+    $arg = arg();
+
+    $tid_team = FALSE;
+    if (count($arg) == 3 && $arg[0] == 'taxonomy' && is_numeric($arg[2])) {
+      $tid_team = $arg[2];
+    }
+    if (count($arg) == 4 && $arg[0] == 'ajax' && is_numeric($arg[2]) && is_numeric($arg[3])) {
+      $tid_team = $arg[3];
+    }
+    if ($tid_team) {
+      $team = taxonomy_term_load($tid_team);
+
+      if ($team && $team->vocabulary_machine_name == 'team') {
+        $form['submitted']['menager']['#default_value'] = $tid_team;
+        $form['submitted']['menager']['#disabled'] = TRUE;
+        $form['submitted']['menager']['#prefix'] = '<div style="display:none">';
+        $form['submitted']['menager']['#suffix'] = '</div>';
+
+        //Загрузим тикет на форму "Связаться с менеджером" ($type = 'menager')
+        $ticket = uber_load_ticket('menager', FALSE, $tid_team);
+        $form['#prefix'] = $ticket;
+      }
+    }
+  }
+
+  //Форма - "Задать вопрос на странице Консультация"
+  if ($form_id == 'webform_client_form_43140') {
+    $format = $form['submitted']['left_info']['#format'];
+    $left = check_markup($form['submitted']['left_info']['#markup'], $format);
+    $right = check_markup($form['submitted']['right_info']['#markup'], $format);
+    $form['submitted']['left_info']['#access'] = FALSE;
+    $form['submitted']['right_info']['#access'] = FALSE;
+    $form['#prefix'] = '<div class="row query-form-wrapper"><div class="col-sm-6 col-md-4 col-1">' . $left . '</div><div class="col-sm-6 col-md-4 col-2">';
+    $form['#suffix'] = '</div><div class="col-md-4 col-3">' . $right . '</div></div>';
+    $form['submitted']['marks']['#empty_option'] = 'Выберите марку авто';
+    //dpm($form);
+  }
+
+  //Форма - "Заказать звонок"
+  if ($form_id == 'webform_client_form_43141') {
+    //Загрузим тикет на форму "Заказать звонок" ($type = 'addcall')
+    $ticket = uber_load_ticket('addcall');
+    $form['#prefix'] = $ticket;
+  }
+
+}
+
+function uber_node_view($node, $view_mode, $langcode) {
+  if ($node->type == 'product' && $view_mode == 'full') {
+    $class = array(
+      'ctools-use-modal',
+      'ctools-modal-uber',
+      'btn',
+      'btn-danger',
+    );
+    $order_link = l('Быстрая покупка', '/ajax/nojs/41556/' . $node->nid, array('attributes' => array('class' => $class)));
+
+    $node->content['speed_order'] = array(
+      '#markup' => '<div class="btn-speed-order">' . $order_link . '</div>',
+    );
+  }
+  if ($node->type == 'question') {
+    $autor_question = render($node->content['field_name']);
+    $autor_response = render($node->content['field_autor_response']);
+    if (isset($node->content['field_mark'][0])) {
+      $marks = render($node->content['field_mark']);
+      $autor_question .= ', автомобиль ' . $marks;
+    }
+
+    $team = field_get_items('node', $node, 'field_autor_response');
+
+    if (isset($team[0]['taxonomy_term'])) {
+      $team = $team[0]['taxonomy_term'];
+      $field_position = field_get_items('taxonomy_term', $team, 'field_position');
+      if (isset($field_position[0]['value']) && !empty($field_position[0]['value'])) {
+        $spec = check_plain(drupal_strtolower($field_position[0]['value']));
+        $autor_response .= ', <span class="spec">' . $spec . '</span>';
+      }
+    }
+
+    $node->content['autor_question'] = array(
+      '#markup' => '<div class="faq-autor-question">' . $autor_question . '</div>',
+      '#weight' => $node->content['field_name']['#weight'],
+    );
+    $node->content['autor_response'] = array(
+      '#markup' => '<div class="faq-autor-response">' . $autor_response . '</div>',
+      '#weight' => $node->content['field_autor_response']['#weight'],
+    );
+  }
+}
+
+/**
+ * Implements hook_ctools_plugin_directory().
+ */
+function uber_ctools_plugin_directory($module, $plugin) {
+
+  /*
+   if ($module == 'linkit' && !empty($plugin)) {
+     return 'plugins/' . $plugin;
+   }
+    */
+
+  if ($module == 'ctools' && $plugin == 'content_types') {
+    return 'plugins/' . $plugin;
+  }
+
+
+  if ($module == 'panels' && !empty($plugin)) {
+    return 'plugins/panels/' . $plugin;
+  }
+  return FALSE;
+}
+
+
+/**
+ * Загружаем тикет из БД в зависимости от места его расположения
+ */
+function uber_load_ticket($type, $node = FALSE, $team_tid = FALSE) {
+  $output = '';
+  $voc = taxonomy_vocabulary_machine_name_load('team');
+  $media = TRUE;
+  if (array_search($type, array('contacts')) !== FALSE) {
+    $media = FALSE;
+  }
+
+  if ($voc) {
+    $query = new EntityFieldQuery();
+    $query
+      ->entityCondition('entity_type', 'taxonomy_term') //определим, какой тип сушности выводим
+      ->propertyCondition('vid', $voc->vid) //ограничим словарь
+      ->fieldCondition('field_ticket', 'first', $type, '=') //укажем значение поля
+      ->fieldCondition('field_ticket', 'second', NULL, 'IS NOT NULL'); //укажем значение поля
+    //При необходимости ограничим конкретным пользователем
+    if ($team_tid && is_numeric($team_tid)) {
+      $query->propertyCondition('tid', $team_tid);
+    }
+
+    $result = $query->execute();
+
+
+    if (isset($result['taxonomy_term']) && is_array($result['taxonomy_term'])) {
+      $teams = array_values($result['taxonomy_term']);
+      $num = rand(0, count($teams) - 1);
+
+      if (isset($teams[$num]->tid)) {
+        $team = taxonomy_term_load($teams[$num]->tid);
+        $field_ticked = field_get_items('taxonomy_term', $team, 'field_ticket');
+        $items = array();
+        foreach ($field_ticked as $value) {
+          if ($value['first'] == $type) {
+            $items[] = $value['second'];
+          }
+        }
+
+        $fnum = rand(0, count($items) - 1);
+        if (isset($items[$fnum])) {
+          $msg = $items[$fnum];
+        }
+
+        if ($msg && isset($team) && $team) {
+          if ($node) {
+            $msg = token_replace($msg, array('node' => $node));
+          }
+          $recommend = check_markup($msg, 'full_html');
+
+          $name = check_plain($team->name);
+          $field_image = field_get_items('taxonomy_term', $team, 'field_image');
+          $field_image = field_view_value('taxonomy_term', $team, 'field_image', $field_image[0], array(
+            'type'     => 'image',
+            'settings' => array(
+              'image_style' => 'team_mini',
+              'image_link'  => 'none',
+            ),
+          ));
+
+          $field_position = field_get_items('taxonomy_term', $team, 'field_position');
+          if (isset($field_position[0]['value']) && !empty($field_position[0]['value'])) {
+            $name .= ', <span class="spec">' . check_plain($field_position[0]['value']) . '</span>';
+          }
+          $output = theme('uber_comment', array(
+            'msg'   => $recommend,
+            'name'  => $name,
+            'img'   => render($field_image),
+            'media' => $media,
+          ));
+        }
+      }
+    }
+  }
+
+  return $output;
+}
+
+/**
+ * Implements hook_token_info().
+ */
+function uber_token_info() {
+  $tokens['file']['file_md5'] = array(
+    'name'        => t('File_md5'),
+    'description' => t('First 2 letter for md5(file_name)'),
+  );
+  return array(
+    'tokens' => $tokens,
+  );
+}
+
+/**
+ * Implements hook_tokens().
+ */
+function uber_tokens($type, $tokens, array $data = array(), array $options = array()) {
+  $replacements = array();
+
+  if ($type == 'file' && !empty($data['file'])) {
+    $file = $data['file'];
+
+    foreach ($tokens as $name => $original) {
+      if ($name == 'file_md5') {
+        $f_name = (isset($file->origname) && !empty($file->origname)) ? $file->origname : $file->filename;
+        $replacements[$original] = _uber_tokens_file_md5($f_name);
+      }
+    }
+  }
+
+  return $replacements;
+}
+
+function _uber_tokens_file_md5($name) {
+  //$md5 = md5($name);
+  $text = trim($name);
+  $output = drupal_substr($text, 0, 3);
+
+  return $output;
+}
+
+
+/*
+ * Вносим правки на exposed form
+ * (убираем лишние элементы и добавляем подсчет товаров)
+ */
+
+function uber_form_views_exposed_form_alter(&$form, $form_state) {
+
+  $form_ids = array(
+    'views-exposed-form-uber-catalog-cp-catalog-category',
+    'views-exposed-form-uber-catalog-cp-catalog-marks',
+    'views-exposed-form-uber-catalog-cp-nodes-faq',
+  );
+
+  $fields = array(
+    'marks',
+    'catalog',
+  );
+
+  if (!(array_search($form['#id'], $form_ids) !== FALSE && !isset($form['#filter_node_count']))) {
+    return;
+  }
+
+  $args = arg();
+  $term = FALSE;
+  $items = array();
+  $term = FALSE;
+  $vid = NULL;
+  $types = array('product');
+
+  if (count($args) == 3 && $args[0] == 'taxonomy' && $args[1] == 'term' && is_numeric($args[2])) {
+    $term = taxonomy_term_load($args[2]);
+  }
+
+  if ($form['#id'] == 'views-exposed-form-uber-catalog-cp-nodes-faq') {
+    $types = array('question');
+    $voc = taxonomy_vocabulary_machine_name_load('marks');
+    $vid = ($voc) ? $voc->vid : NULL;
+    $term = TRUE;
+  }
+
+  //Преобразуем формы
+  if ($term) {
+    $items_count = _uber_taxonomy_filter_node_count($term, $types, $vid);
+
+    //обработаем списки для нужных полей
+    foreach ($fields as $field) {
+
+      if (isset($form[$field]['#options'])) {
+        $options_new = $form[$field]['#options'];
+        foreach ($options_new as $key => $opt) {
+          if (isset($opt->option) && is_array($opt->option)) {
+
+            foreach ($opt->option as $tid => $name) {
+              if (isset($items_count[$tid]) && $items_count[$tid] > 0) {
+                //меняем название
+                $count = $items_count[$tid];
+                $name_new = $name . ' (' . $count . ')';
+                if (strpos($name, ' (' . $count . ')') === FALSE) {
+                  $options_new[$key]->option[$tid] = $name_new;
+                }
+              }
+              else {
+                //скрываем элемент
+                unset($options_new[$key]);
+              }
+            }
+          }
+        }
+
+        $form[$field]['#options'] = $options_new;
+        $form['#filter_node_count'] = TRUE;
+      }
+    }
+  }
+}
+
+
+/*
+ * Подсчитываем количество нод у терминов
+ * (передаем в качестве параметра - tid термина, который выступает в роли фильтра)
+ */
+
+function _uber_taxonomy_filter_node_count($term, $types = array('product'), $vid = NULL) {
+  $items = array();
+  $query = db_select('node', 'n');
+  $query->innerJoin('taxonomy_index', 'ti', 'n.nid = ti.nid');
+  $query->fields('n', array('nid'));
+  $query->condition('n.status', 1);
+  $query->condition('n.type', $types, 'IN');
+  if ($term && isset($term->tid)) {
+    $query->condition('ti.tid', $term->tid);
+  }
+  //Если передано число, значит это номер словаря, из которого термины для загрузки
+  //Это позволит предотвратить загрузку лишних нод
+  if(!empty($vid)){
+    $query->innerJoin('taxonomy_term_data', 'td', 'td.tid = ti.tid');
+    $query->condition('td.vid', $vid);
+  }
+
+  $query->groupBy('nid');
+  $nids = $query->execute()->fetchCol();
+
+  if (count($nids) > 0) {
+    $query = db_select('taxonomy_index', 'ti');
+    $query->innerJoin('taxonomy_term_data', 'td', 'td.tid = ti.tid');
+    $query->fields('ti', array('tid'));
+    $query->condition('ti.nid', $nids, 'IN');
+    if ($term && isset($term->tid)) {
+      $query->condition('td.vid', $term->vid, '<>');
+    }
+    if(!empty($vid)){
+      $query->condition('td.vid', $vid);
+    }
+    $query->addExpression('COUNT(*)', 'count');
+    $query->groupBy('tid');
+
+    $items = $query->execute()->fetchAllKeyed();
+  }
+
+  return $items;
+}

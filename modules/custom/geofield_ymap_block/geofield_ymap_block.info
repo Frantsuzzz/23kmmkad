@@ -1,0 +1,6 @@
+name = Geofield Yandex Maps - Block
+description = Geofield Yandex Maps - Block
+core = 7.x
+package = Frantsuzzz
+
+dependencies[] = geofield_ymap

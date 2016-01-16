@@ -1,0 +1,198 @@
+<?php
+//catalog/[node:taxonomy-catalog:0:name]/[node:title]
+/**
+ * Implements hook_menu().
+ */
+function uber_migrate_menu() {
+  $items = array();
+
+  $items['admin/content/migrate/uber_update'] = array(
+    'title' => 'Update ID for table "GO2"',
+    'page callback' => 'drupal_get_form',
+    'page arguments' => array('uber_migrate_form'),
+    'access arguments' => array(MIGRATE_ACCESS_ADVANCED),
+    'type' => MENU_LOCAL_TASK,
+  );
+
+  return $items;
+}
+
+
+/*
+ * Выбираем из БД строки без HASH
+ */
+function _uber_migrate_load_empty_id() {
+  // Выбираем из базы все nid
+  $items = array();
+
+   $result = db_select('go2', 'n')
+    ->fields('n', array('ID'))
+    ->condition(
+      db_or()
+        ->condition('HASH', '')
+        ->condition('HASH', NULL, 'IS NULL')
+    )
+    ->execute();
+
+  foreach ($result as $node) {
+    $items[] = $node->ID;
+  }
+  return $items;
+}
+
+/**
+ *
+ * Allows to start Batch operations
+ */
+function uber_migrate_form() {
+  $form = array();
+
+  $form['submit'] = array(
+    '#type' => 'submit',
+    '#value' => t('GO'),
+  );
+
+  return $form;
+}
+
+/**
+ * Submit callback for title changer form
+ */
+function uber_migrate_form_submit($form, &$form_state) {
+
+  // Получаем массив ID
+  $data = _uber_migrate_load_empty_id();
+
+  // Создаём массив с данными для батча
+  $batch = array(
+    'title' => t('ID update processing'),
+    'operations' => array(
+      array('_uber_migrate_process_update_id', array($data)),
+    ),
+    'finished' => '_uber_migrate_finished_callback',
+ //   'file' => drupal_get_path('module', 'title_changer') . '/title_changer.batch.inc',
+  );
+  // Создаём работу для батча
+  batch_set($batch);
+  // Стартуем батч
+  batch_process();
+}
+
+
+/**
+ * Process every item in batch
+ */
+function _uber_migrate_process_update_id($nodes, &$context) {
+
+  // Количество материалов, которые будут обработаны одной пачкой за раз
+  $limit = 100;
+
+  // Задаём начальные значения для батча
+  if (empty($context['sandbox']['progress'])) {
+    // Текущее количество обработанных строк
+    $context['sandbox']['progress'] = 0;
+    // Общее количество строк, которые надо обработать
+    $context['sandbox']['max'] = count($nodes);
+  }
+
+  // Сохраняем массив с материалами
+  // Далее этот массив будет меняться
+  if(empty($context['sandbox']['items'])) {
+    $context['sandbox']['items'] = $nodes;
+  }
+
+  $counter = 0;
+  if(!empty($context['sandbox']['items'])) {
+
+    // Убираем из массива с данными уже обработанные материалы
+    if ($context['sandbox']['progress'] != 0) {
+      array_splice($context['sandbox']['items'], 0, $limit);
+    }
+
+    foreach ($context['sandbox']['items'] as $line) {
+      if ($counter != $limit) {
+        _migrate_update_ID($line);
+
+        // Увеличиваем счётчики
+        $counter++;
+        $context['sandbox']['progress']++;
+
+        $context['message'] = t('Now processing lines %progress of %count', array('%progress' => $context['sandbox']['progress'], '%count' => $context['sandbox']['max']));
+        $context['results']['processed'] = $context['sandbox']['progress'];
+      }
+    }
+  }
+
+  // Проверка, не пора ли закончить обработку данных.
+  if ($context['sandbox']['progress'] != $context['sandbox']['max']) {
+    $context['finished'] = $context['sandbox']['progress'] / $context['sandbox']['max'];
+  }
+}
+
+/**
+ * Finish callback for Batch
+ */
+function _uber_migrate_finished_callback($success, $results, $operations) {
+  if ($success) {
+    $message = format_plural($results['processed'], 'One line processed.', '@count nodes processed.');
+  }
+  else {
+    $message = t('Finished with an error.');
+  }
+  drupal_set_message($message);
+}
+
+function _migrate_update_ID($id) {
+  $item = new stdClass();
+  $item->ID = $id;
+
+  if(!empty($item->ID)){
+
+// Drupal 7, dynamic query
+    $result = db_select('go2', 'n')
+      ->fields('n',array('ID','NOMEN','ARTICUL'))
+      ->condition('n.ID', $item->ID)
+      ->execute();
+
+    foreach ($result as $node) {
+      $item->NOMEN = $node->NOMEN;
+      $item->HASH = $node->HASH;
+      $item->ARTICUL = $node->ARTICUL;
+    }
+
+    $str = $item->NOMEN . '_' . $item->ARTICUL;
+    $md5 = md5($str);
+
+    db_update('go2')
+      ->fields(array('HASH' => $md5))
+      ->condition('ID', $item->ID)
+      ->execute();
+  }
+  return TRUE;
+}
+
+/*
+ * Загружаем массив с синонимами терминов
+ * TOGO Добавить кеширование результата, что бы уменьшить время загрузки
+ */
+
+function _uber_migrate_term_load_sinonim($vid, $parent){
+  $terms = taxonomy_get_tree($vid, $parent, 1, TRUE);
+  if ($cache = cache_get('uber_migrate_sinonim_' . $vid . '_' . $parent . '_1')) {
+    $items = $cache->data;
+  }else{
+
+  $items = array();
+  foreach($terms as $term){
+   $field_items = field_get_items('taxonomy_term', $term, 'field_key');
+    if(isset($field_items[0]['value']) && !empty($field_items[0]['value'])){
+      $values = drupal_strtolower($field_items[0]['value']);
+      $items[$term->tid] = explode(';', $values);
+    }
+  }
+
+  cache_set('uber_migrate_sinonim_' . $vid . '_' . $parent . '_1', $items, 'cache', time() + 60 * 10);
+  }
+
+return $items;
+}
